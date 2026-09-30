@@ -1,25 +1,31 @@
 import asyncio
 import logging
 import os
-import random
 import sqlite3
+import random
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from aiogram.types import Message, CallbackQuery
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO)
+
+# =========================
+# НАСТРОЙКИ
+# =========================
+
+load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN не найден")
+    raise RuntimeError(
+        "Не найден TELEGRAM_BOT_TOKEN. "
+        "Создай файл .env и добавь туда токен."
+    )
 
+logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -42,7 +48,8 @@ def init_db():
             first_name TEXT,
             correct INTEGER DEFAULT 0,
             wrong INTEGER DEFAULT 0,
-            total INTEGER DEFAULT 0
+            total INTEGER DEFAULT 0,
+            tests INTEGER DEFAULT 0
         )
     """)
 
@@ -68,11 +75,11 @@ def add_user(user):
     conn.close()
 
 
-def update_statistics(user_id, correct):
+def update_answer(user_id, is_correct):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    if correct:
+    if is_correct:
         cursor.execute("""
             UPDATE users
             SET correct = correct + 1,
@@ -91,12 +98,26 @@ def update_statistics(user_id, correct):
     conn.close()
 
 
-def get_statistics(user_id):
+def finish_test(user_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT correct, wrong, total
+        UPDATE users
+        SET tests = tests + 1
+        WHERE telegram_id = ?
+    """, (user_id,))
+
+    conn.commit()
+    conn.close()
+
+
+def get_stats(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT correct, wrong, total, tests
         FROM users
         WHERE telegram_id = ?
     """, (user_id,))
@@ -105,7 +126,10 @@ def get_statistics(user_id):
 
     conn.close()
 
-    return result or (0, 0, 0)
+    if result is None:
+        return 0, 0, 0, 0
+
+    return result
 
 
 # =========================
@@ -114,123 +138,198 @@ def get_statistics(user_id):
 
 QUESTIONS = [
     {
-        "question": "Что делает команда git pull?",
-        "answers": [
-            "Удаляет репозиторий",
-            "Получает изменения из удалённого репозитория",
-            "Создаёт новую ветку",
-            "Удаляет последний commit",
-        ],
-        "correct": 1,
-        "explanation": "git pull получает изменения из удалённого репозитория и интегрирует их в текущую ветку."
-    },
-
-    {
-        "question": "Какой язык обычно используется для создания интерактивности на веб-странице?",
-        "answers": [
-            "HTML",
-            "CSS",
-            "JavaScript",
-            "SQL",
-        ],
-        "correct": 2,
-        "explanation": "JavaScript используется для добавления интерактивного поведения веб-страниц."
-    },
-
-    {
-        "question": "Что означает SQL?",
-        "answers": [
-            "Structured Query Language",
-            "Simple Question Language",
-            "System Query Logic",
-            "Server Question Language",
-        ],
-        "correct": 0,
-        "explanation": "SQL расшифровывается как Structured Query Language."
-    },
-
-    {
+        "category": "Python",
         "question": "Какой тип данных используется для хранения True или False в Python?",
         "answers": [
             "String",
             "Boolean",
             "List",
-            "Integer",
+            "Integer"
         ],
         "correct": 1,
         "explanation": "В Python логические значения True и False имеют тип bool."
     },
 
     {
-        "question": "Что такое API?",
+        "category": "Python",
+        "question": "Какой символ используется для комментария в Python?",
         "answers": [
-            "Графический редактор",
-            "Интерфейс взаимодействия программ",
-            "Тип базы данных",
-            "Операционная система",
+            "//",
+            "/*",
+            "#",
+            "<!--"
         ],
-        "correct": 1,
-        "explanation": "API — это интерфейс, через который программы могут взаимодействовать друг с другом."
+        "correct": 2,
+        "explanation": "Однострочный комментарий в Python начинается с символа #."
     },
 
     {
-        "question": "Что делает CSS?",
+        "category": "JavaScript",
+        "question": "Как объявить переменную, значение которой можно изменить?",
         "answers": [
-            "Хранит данные",
-            "Стилизует веб-страницу",
-            "Создаёт SQL-запросы",
-            "Запускает сервер",
+            "const",
+            "let",
+            "fixed",
+            "static"
         ],
         "correct": 1,
-        "explanation": "CSS отвечает за внешний вид и оформление HTML-страницы."
+        "explanation": "let используется для объявления переменной, значение которой можно изменить."
     },
 
     {
-        "question": "Что такое Docker?",
+        "category": "JavaScript",
+        "question": "Какой оператор используется для строгого сравнения?",
         "answers": [
-            "Среда для запуска приложений в контейнерах",
-            "Язык программирования",
-            "База данных",
-            "Редактор изображений",
+            "=",
+            "==",
+            "===",
+            "!="
+        ],
+        "correct": 2,
+        "explanation": "Оператор === сравнивает и значение, и тип данных."
+    },
+
+    {
+        "category": "SQL",
+        "question": "Как получить данные из таблицы SQL?",
+        "answers": [
+            "GET",
+            "SELECT",
+            "TAKE",
+            "READ"
+        ],
+        "correct": 1,
+        "explanation": "Команда SELECT используется для получения данных из таблицы."
+    },
+
+    {
+        "category": "SQL",
+        "question": "Какая команда добавляет новую запись в таблицу?",
+        "answers": [
+            "INSERT",
+            "ADD",
+            "CREATE",
+            "PUSH"
         ],
         "correct": 0,
-        "explanation": "Docker позволяет запускать приложения в изолированных контейнерах."
+        "explanation": "INSERT INTO используется для добавления новых записей."
     },
 
     {
+        "category": "Git",
         "question": "Какая команда создаёт новый Git-репозиторий?",
         "answers": [
             "git start",
-            "git create",
             "git init",
-            "git new",
-        ],
-        "correct": 2,
-        "explanation": "Команда git init создаёт новый локальный Git-репозиторий."
-    },
-
-    {
-        "question": "Что такое HTTP?",
-        "answers": [
-            "Протокол передачи данных в вебе",
-            "Язык программирования",
-            "База данных",
-            "Операционная система",
-        ],
-        "correct": 0,
-        "explanation": "HTTP — протокол, используемый для передачи данных между клиентом и веб-сервером."
-    },
-
-    {
-        "question": "Какой тег HTML используется для создания ссылки?",
-        "answers": [
-            "<link>",
-            "<a>",
-            "<url>",
-            "<href>",
+            "git create",
+            "git new"
         ],
         "correct": 1,
-        "explanation": "Для создания гиперссылки в HTML используется тег <a>."
+        "explanation": "git init создаёт новый локальный Git-репозиторий."
+    },
+
+    {
+        "category": "Git",
+        "question": "Какая команда отправляет локальные изменения на удалённый репозиторий?",
+        "answers": [
+            "git send",
+            "git upload",
+            "git push",
+            "git transfer"
+        ],
+        "correct": 2,
+        "explanation": "git push отправляет локальные commits в удалённый репозиторий."
+    },
+
+    {
+        "category": "HTTP/API",
+        "question": "Что такое API?",
+        "answers": [
+            "База данных",
+            "Интерфейс взаимодействия программ",
+            "Язык программирования",
+            "Операционная система"
+        ],
+        "correct": 1,
+        "explanation": "API позволяет различным программам взаимодействовать друг с другом."
+    },
+
+    {
+        "category": "Web",
+        "question": "Какой язык отвечает за структуру веб-страницы?",
+        "answers": [
+            "HTML",
+            "CSS",
+            "SQL",
+            "Python"
+        ],
+        "correct": 0,
+        "explanation": "HTML определяет структуру и содержимое веб-страницы."
+    },
+
+    {
+        "category": "Web",
+        "question": "Какой язык используется главным образом для стилизации веб-страницы?",
+        "answers": [
+            "HTML",
+            "CSS",
+            "SQL",
+            "Bash"
+        ],
+        "correct": 1,
+        "explanation": "CSS отвечает за внешний вид элементов HTML."
+    },
+
+    {
+        "category": "Docker",
+        "question": "Что такое Docker?",
+        "answers": [
+            "Язык программирования",
+            "Система управления базами данных",
+            "Платформа контейнеризации",
+            "Графический редактор"
+        ],
+        "correct": 2,
+        "explanation": "Docker используется для создания и запуска приложений в контейнерах."
+    },
+
+    {
+        "category": "Linux",
+        "question": "Какая команда показывает содержимое текущей директории в Linux?",
+        "answers": [
+            "cd",
+            "ls",
+            "show",
+            "dirlist"
+        ],
+        "correct": 1,
+        "explanation": "Команда ls показывает файлы и папки текущей директории."
+    },
+
+    {
+        "category": "Базы данных",
+        "question": "Что обычно используется для уникальной идентификации записи в таблице?",
+        "answers": [
+            "Primary Key",
+            "CSS",
+            "API",
+            "Cookie"
+        ],
+        "correct": 0,
+        "explanation": "Primary Key уникально идентифицирует записи таблицы."
+    },
+
+    {
+        "category": "Алгоритмы",
+        "question": "Что такое алгоритм?",
+        "answers": [
+            "Набор последовательных действий для решения задачи",
+            "Только язык программирования",
+            "Тип компьютера",
+            "Файл"
+        ],
+        "correct": 0,
+        "explanation": "Алгоритм — последовательность действий, которая приводит к решению задачи."
     },
 ]
 
@@ -239,11 +338,11 @@ QUESTIONS = [
 # СОСТОЯНИЕ ТЕСТОВ
 # =========================
 
-user_quizzes = {}
+active_quizzes = {}
 
 
 # =========================
-# КЛАВИАТУРА
+# ГЛАВНОЕ МЕНЮ
 # =========================
 
 def main_menu():
@@ -266,7 +365,7 @@ def main_menu():
                     text="ℹ️ Помощь",
                     callback_data="help"
                 )
-            ],
+            ]
         ]
     )
 
@@ -277,15 +376,31 @@ def main_menu():
 
 @dp.message(Command("start"))
 async def start_handler(message: Message):
+
     add_user(message.from_user)
 
     await message.answer(
         "👋 Привет!\n\n"
         "Добро пожаловать в IT Quiz Bot 🧠\n\n"
-        "Здесь ты можешь проверять знания по программированию, "
-        "Git, SQL, Web, API и другим IT-темам.\n\n"
+        "Проверяй свои знания в IT, "
+        "проходи тесты и следи за статистикой.\n\n"
         "Выбери действие:",
         reply_markup=main_menu()
+    )
+
+
+# =========================
+# КОМАНДА QUIZ
+# =========================
+
+@dp.message(Command("quiz"))
+async def quiz_command(message: Message):
+
+    add_user(message.from_user)
+
+    await start_quiz_process(
+        message,
+        message.from_user.id
     )
 
 
@@ -293,39 +408,61 @@ async def start_handler(message: Message):
 # НАЧАЛО ТЕСТА
 # =========================
 
-@dp.callback_query(F.data == "start_quiz")
-async def start_quiz(callback: CallbackQuery):
+async def start_quiz_process(message, user_id):
+
     questions = random.sample(
         QUESTIONS,
         min(3, len(QUESTIONS))
     )
 
-    user_quizzes[callback.from_user.id] = {
+    active_quizzes[user_id] = {
         "questions": questions,
         "current": 0,
-        "correct": 0,
+        "correct": 0
     }
+
+    await send_question(
+        message,
+        user_id
+    )
+
+
+@dp.callback_query(F.data == "start_quiz")
+async def start_quiz_callback(callback: CallbackQuery):
+
+    add_user(callback.from_user)
 
     await callback.answer()
 
-    await send_question(callback.message, callback.from_user.id)
+    await start_quiz_process(
+        callback.message,
+        callback.from_user.id
+    )
 
 
-async def send_question(message: Message, user_id: int):
-    quiz = user_quizzes[user_id]
+# =========================
+# ПОКАЗ ВОПРОСА
+# =========================
+
+async def send_question(message, user_id):
+
+    quiz = active_quizzes.get(user_id)
+
+    if not quiz:
+        return
 
     current = quiz["current"]
-    questions = quiz["questions"]
 
-    question = questions[current]
+    question = quiz["questions"][current]
 
     buttons = []
 
-    for i, answer in enumerate(question["answers"]):
+    for index, answer in enumerate(question["answers"]):
+
         buttons.append([
             InlineKeyboardButton(
                 text=answer,
-                callback_data=f"answer:{i}"
+                callback_data=f"answer:{index}"
             )
         ])
 
@@ -333,48 +470,73 @@ async def send_question(message: Message, user_id: int):
         inline_keyboard=buttons
     )
 
+    text = (
+        f"🧠 Вопрос {current + 1}/"
+        f"{len(quiz['questions'])}\n\n"
+        f"📚 Категория: {question['category']}\n\n"
+        f"{question['question']}"
+    )
+
     await message.edit_text(
-        f"🧠 Вопрос {current + 1}/{len(questions)}\n\n"
-        f"{question['question']}",
+        text,
         reply_markup=keyboard
     )
 
 
 # =========================
-# ОТВЕТ
+# ПРОВЕРКА ОТВЕТА
 # =========================
 
 @dp.callback_query(F.data.startswith("answer:"))
 async def answer_handler(callback: CallbackQuery):
+
     user_id = callback.from_user.id
 
-    if user_id not in user_quizzes:
+    quiz = active_quizzes.get(user_id)
+
+    if not quiz:
         await callback.answer(
-            "Начни новый тест.",
+            "Этот тест уже завершён.",
             show_alert=True
         )
         return
 
-    quiz = user_quizzes[user_id]
+    selected_answer = int(
+        callback.data.split(":")[1]
+    )
 
-    selected = int(callback.data.split(":")[1])
-
-    question = quiz["questions"][quiz["current"]]
+    question = quiz["questions"][
+        quiz["current"]
+    ]
 
     correct_answer = question["correct"]
 
-    if selected == correct_answer:
-        quiz["correct"] += 1
-        update_statistics(user_id, True)
+    is_correct = (
+        selected_answer == correct_answer
+    )
 
-        text = (
+    if is_correct:
+
+        quiz["correct"] += 1
+
+        update_answer(
+            user_id,
+            True
+        )
+
+        result_text = (
             "✅ Правильно!\n\n"
             f"{question['explanation']}"
         )
-    else:
-        update_statistics(user_id, False)
 
-        text = (
+    else:
+
+        update_answer(
+            user_id,
+            False
+        )
+
+        result_text = (
             "❌ Неправильно.\n\n"
             f"Правильный ответ: "
             f"{question['answers'][correct_answer]}\n\n"
@@ -383,20 +545,33 @@ async def answer_handler(callback: CallbackQuery):
 
     quiz["current"] += 1
 
+    # Тест закончен
     if quiz["current"] >= len(quiz["questions"]):
 
-        total = len(quiz["questions"])
+        total_questions = len(
+            quiz["questions"]
+        )
+
         correct = quiz["correct"]
 
-        percent = round(correct / total * 100, 1)
+        wrong = (
+            total_questions - correct
+        )
 
-        del user_quizzes[user_id]
+        percent = round(
+            correct / total_questions * 100,
+            1
+        )
+
+        finish_test(user_id)
+
+        del active_quizzes[user_id]
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="🔄 Пройти ещё раз",
+                        text="🔄 Ещё один тест",
                         callback_data="start_quiz"
                     )
                 ],
@@ -411,16 +586,17 @@ async def answer_handler(callback: CallbackQuery):
                         text="🏠 Главное меню",
                         callback_data="menu"
                     )
-                ],
+                ]
             ]
         )
 
         await callback.message.edit_text(
-            f"{text}\n\n"
-            "🎉 Тест завершён!\n\n"
-            f"✅ Правильных: {correct}\n"
-            f"❌ Неправильных: {total - correct}\n"
-            f"🎯 Точность: {percent}%",
+            result_text
+            + "\n\n"
+            + "🎉 Тест завершён!\n\n"
+            + f"✅ Правильных: {correct}\n"
+            + f"❌ Неправильных: {wrong}\n"
+            + f"🎯 Точность: {percent}%",
             reply_markup=keyboard
         )
 
@@ -438,7 +614,7 @@ async def answer_handler(callback: CallbackQuery):
         )
 
         await callback.message.edit_text(
-            text,
+            result_text,
             reply_markup=keyboard
         )
 
@@ -451,13 +627,16 @@ async def answer_handler(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "next_question")
 async def next_question(callback: CallbackQuery):
+
     user_id = callback.from_user.id
 
-    if user_id not in user_quizzes:
+    if user_id not in active_quizzes:
+
         await callback.answer(
             "Тест уже завершён.",
             show_alert=True
         )
+
         return
 
     await callback.answer()
@@ -472,14 +651,39 @@ async def next_question(callback: CallbackQuery):
 # СТАТИСТИКА
 # =========================
 
+@dp.message(Command("stats"))
+async def stats_command(message: Message):
+
+    add_user(message.from_user)
+
+    await show_statistics(
+        message,
+        message.from_user.id
+    )
+
+
 @dp.callback_query(F.data == "statistics")
-async def statistics_handler(callback: CallbackQuery):
-    correct, wrong, total = get_statistics(
+async def statistics_callback(callback: CallbackQuery):
+
+    await callback.answer()
+
+    await show_statistics(
+        callback.message,
         callback.from_user.id
     )
 
+
+async def show_statistics(message, user_id):
+
+    correct, wrong, total, tests = get_stats(
+        user_id
+    )
+
     if total > 0:
-        percent = round(correct / total * 100, 1)
+        percent = round(
+            correct / total * 100,
+            1
+        )
     else:
         percent = 0
 
@@ -496,28 +700,44 @@ async def statistics_handler(callback: CallbackQuery):
                     text="🏠 Главное меню",
                     callback_data="menu"
                 )
-            ],
+            ]
         ]
     )
 
-    await callback.message.edit_text(
+    await message.edit_text(
         "📊 ТВОЯ СТАТИСТИКА\n\n"
         f"Всего вопросов: {total}\n\n"
         f"✅ Правильных: {correct}\n"
         f"❌ Неправильных: {wrong}\n\n"
-        f"🎯 Точность: {percent}%",
+        f"🎯 Точность: {percent}%\n\n"
+        f"🏆 Пройдено тестов: {tests}",
         reply_markup=keyboard
     )
-
-    await callback.answer()
 
 
 # =========================
 # ПОМОЩЬ
 # =========================
 
+@dp.message(Command("help"))
+async def help_command(message: Message):
+
+    await send_help(
+        message
+    )
+
+
 @dp.callback_query(F.data == "help")
-async def help_handler(callback: CallbackQuery):
+async def help_callback(callback: CallbackQuery):
+
+    await callback.answer()
+
+    await send_help(
+        callback.message
+    )
+
+
+async def send_help(message):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -530,16 +750,16 @@ async def help_handler(callback: CallbackQuery):
         ]
     )
 
-    await callback.message.edit_text(
+    await message.edit_text(
         "ℹ️ ПОМОЩЬ\n\n"
-        "🧠 Начать тест — пройти 3 IT-вопроса.\n\n"
-        "📊 Статистика — посмотреть свой результат.\n\n"
-        "Каждый вопрос имеет несколько вариантов ответа.\n"
-        "После ответа бот покажет объяснение.",
+        "🧠 Начать тест\n"
+        "Проходи тест из 3 случайных вопросов.\n\n"
+        "📊 Статистика\n"
+        "Смотри свои результаты и точность.\n\n"
+        "Каждый вопрос имеет 4 варианта ответа.\n"
+        "После ответа бот показывает объяснение.",
         reply_markup=keyboard
     )
-
-    await callback.answer()
 
 
 # =========================
@@ -547,7 +767,9 @@ async def help_handler(callback: CallbackQuery):
 # =========================
 
 @dp.callback_query(F.data == "menu")
-async def menu_handler(callback: CallbackQuery):
+async def menu_callback(callback: CallbackQuery):
+
+    await callback.answer()
 
     await callback.message.edit_text(
         "🏠 Главное меню\n\n"
@@ -555,17 +777,18 @@ async def menu_handler(callback: CallbackQuery):
         reply_markup=main_menu()
     )
 
-    await callback.answer()
-
 
 # =========================
 # ЗАПУСК
 # =========================
 
 async def main():
+
     init_db()
 
-    logging.info("IT Quiz Bot запускается...")
+    logging.info(
+        "IT Quiz Bot запускается..."
+    )
 
     await dp.start_polling(bot)
 
